@@ -26,7 +26,7 @@ class positionalencoding(nn.Module):
         pe = pe.unsqueeze(0) #pe -> [1,seq_len,d_model]
         #keeps it in register
         self.register_buffer('pe',pe)
-    def forward(self,x:torch.tensor)->torch.tensor:
+    def forward(self,x:torch.tensor)->torch.Tensor:
         x = x+self.pe[:, :x.shape[1], :].requires_grad_(False)
         return self.dropout(x)
 
@@ -70,7 +70,7 @@ class MultiHeadAttention(nn.Module):
         self.dropout = nn.Dropout(dropout)
     
     @staticmethod
-    def attention(self,query:torch.tensor,key:torch.tensor,value:torch.tensor,mask:torch.tensor=None,dropout:nn.Dropout=None)->torch.tensor:
+    def attention(query:torch.tensor,key:torch.tensor,value:torch.tensor,mask:torch.tensor=None,dropout:nn.Dropout=None)->torch.tensor:
         d_k = query.shape[-1]
         scores = torch.matmul(query,key.transpose(-2,-1))/math.sqrt(d_k)
         if mask is not None:
@@ -156,7 +156,7 @@ class Projectionlayer(nn.Module):
         super().__init__()
         self.linear = nn.Linear(d_model,vocab_size)
     def forward(self,x:torch.tensor)->torch.tensor:
-        return torch.log_softmax(self.linear(x),dim=-1)
+        return self.linear(x)
 
 class Transformer(nn.Module):
     def __init__(self,encoder:Encoder,decoder:Decoder,src_embed:embedding,tgt_embed:embedding,src_pos:positionalencoding,tgt_pos:positionalencoding,projection_layer:Projectionlayer):
