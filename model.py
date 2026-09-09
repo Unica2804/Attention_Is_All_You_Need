@@ -18,7 +18,7 @@ class positionalencoding(nn.Module):
         self.seq_len = seq_len
         self.d_model = d_model
         self.dropout = nn.Dropout(dropout)
-        self.pe = torch.zeros(seq_len,d_model)
+        pe = torch.zeros(seq_len,d_model)
         numer = torch.arange(0,seq_len,dtype=torch.float32).unsqueeze(1)
         denom = torch.exp(torch.arange(0,d_model,2).float()*(-math.log(10000.0)/d_model))
         pe[:,0::2] = torch.sin(numer*denom)
@@ -31,10 +31,10 @@ class positionalencoding(nn.Module):
         return self.dropout(x)
 
 class layer_norm(nn.Module):
-    def __init__(self,eps:float=10**-6):
+    def __init__(self,features:int,eps:float=10**-6):
         super().__init__()
-        self.alpha = nn.Parameter(torch.ones(1))
-        self.bias = nn.Parameter(torch.zeros(1))
+        self.alpha = nn.Parameter(torch.ones(features))
+        self.bias = nn.Parameter(torch.zeros(features))
         self.eps = eps
     def forward(self,x:torch.tensor)->torch.tensor:
         mean = x.mean(dim = -1, keepdim=True)
@@ -89,8 +89,8 @@ class MultiHeadAttention(nn.Module):
         # Split into multiple heads
         # dim -> [batch_size,seq_len,num_heads,d_k] -> [batch_size,num_heads,seq_len,d_k]
         query = query.view(query.shape[0], query.shape[1], self.num_heads, self.d_k).transpose(1, 2)
-        key = key.view(query.shape[0], query.shape[1], self.num_heads, self.d_k).transpose(1, 2)
-        value = value.view(query.shape[0], query.shape[1], self.num_heads, self.d_k).transpose(1, 2)
+        key = key.view(key.shape[0], key.shape[1], self.num_heads, self.d_k).transpose(1, 2)
+        value = value.view(value.shape[0], value.shape[1], self.num_heads, self.d_k).transpose(1, 2)
 
         x,self.attention_weights = self.attention(query,key,value,mask,self.dropout)
         # dim -> [batch_size,num_heads,seq_len,d_k] -> [batch_size,seq_len,d_model]
@@ -98,19 +98,19 @@ class MultiHeadAttention(nn.Module):
         return self.w_o(x)
 
 class ResidualConnection(nn.Module):
-    def __init__(self,dropout:float):
+    def __init__(self,features: int,dropout:float):
         super().__init__()
         self.dropout = nn.Dropout(dropout)
-        self.norm = layer_norm()
+        self.norm = layer_norm(features)
     def forward(self,x:torch.tensor,sub_layer:nn.Module)->torch.tensor:
         return x + self.dropout(sub_layer(self.norm(x)))
 
 class Encoderblock(nn.Module):
-    def __init__(self,self_attention:MultiHeadAttention,feed_forward:FeedForward,dropout:float)->None:
+    def __init__(self,features: int,self_attention:MultiHeadAttention,feed_forward:FeedForward,dropout:float)->None:
         super().__init__()
         self.self_attention = self_attention
         self.feed_forward = feed_forward
-        self.residual_conn = nn.ModuleList([ResidualConnection(dropout) for _ in range(2)])
+        self.residual_conn = nn.ModuleList([ResidualConnection(features,dropout) for _ in range(2)])
     
     def forward(self,x:torch.tensor,mask:torch.tensor)->torch.tensor:
         x = self.residual_conn[0](x,lambda x: self.self_attention(x,x,x,mask))
@@ -118,22 +118,22 @@ class Encoderblock(nn.Module):
         return x
 
 class Encoder(nn.Module):
-    def __init__(self,layers:nn.ModuleList):
+    def __init__(self,features: int,layers:nn.ModuleList):
         super().__init__()
         self.layers = layers
-        self.norm = layer_norm()
+        self.norm = layer_norm(features)
     def forward(self,x:torch.tensor,mask:torch.tensor)->torch.tensor:
         for layer in self.layers:
             x = layer(x,mask)
         return self.norm(x)
 
 class Decoderblock(nn.Module):
-    def __init__(self,masked_self_attention:MultiHeadAttention,multi_head_attention:MultiHeadAttention,feed_forward:FeedForward,dropout:float)->None:
+    def __init__(self,features: int,masked_self_attention:MultiHeadAttention,multi_head_attention:MultiHeadAttention,feed_forward:FeedForward,dropout:float)->None:
         super().__init__()
         self.masked_self_attention = masked_self_attention
         self.multi_head_attention = multi_head_attention
         self.feed_forward = feed_forward
-        self.residual_conn = nn.ModuleList([ResidualConnection(dropout) for _ in range(3)])
+        self.residual_conn = nn.ModuleList([ResidualConnection(features,dropout) for _ in range(3)])
     
     def forward(self,x:torch.tensor,encoder_output:torch.tensor,src_mask:torch.tensor,tgt_mask:torch.tensor)->torch.tensor:
         x = self.residual_conn[0](x,lambda x: self.masked_self_attention(x,x,x,tgt_mask))
@@ -142,10 +142,10 @@ class Decoderblock(nn.Module):
         return x
 
 class Decoder(nn.Module):
-    def __init__(self,layers:nn.ModuleList):
+    def __init__(self,features: int,layers:nn.ModuleList):
         super().__init__()
         self.layers = layers
-        self.norm = layer_norm()
+        self.norm = layer_norm(features)
     def forward(self,x:torch.tensor,encoder_output:torch.tensor,src_mask:torch.tensor,tgt_mask:torch.tensor)->torch.tensor:
         for layer in self.layers:
             x = layer(x,encoder_output,src_mask,tgt_mask)
@@ -193,23 +193,22 @@ def make_model(src_vocab_size:int,tgt_vocab_size:int,src_seq_len:int,tgt_seq_len
     for _ in range(N):
         encoder_self_attention = MultiHeadAttention(d_model,num_heads,dropout)
         feed_forward = FeedForward(d_model,d_ff,dropout)
-        encoder_block.append(Encoderblock(encoder_self_attention,feed_forward,dropout))
+        encoder_block.append(Encoderblock(d_model,encoder_self_attention,feed_forward,dropout))
 
     decoder_block = []
     for _ in range(N):
         decoder_masked_self_attention = MultiHeadAttention(d_model,num_heads,dropout)
         decoder_cross_attention = MultiHeadAttention(d_model,num_heads,dropout)
         feed_forward = FeedForward(d_model,d_ff,dropout)
-        decoder_block.append(Decoderblock(decoder_masked_self_attention,decoder_cross_attention,feed_forward,dropout))
+        decoder_block.append(Decoderblock(d_model,decoder_masked_self_attention,decoder_cross_attention,feed_forward,dropout))
     
-    encoder = Encoder(nn.ModuleList(encoder_block))
-    decoder = Decoder(nn.ModuleList(decoder_block))
+    encoder = Encoder(d_model,nn.ModuleList(encoder_block))
+    decoder = Decoder(d_model,nn.ModuleList(decoder_block))
     
     projection_layer = Projectionlayer(d_model,tgt_vocab_size)
     
     model = Transformer(encoder,decoder,src_embed,tgt_embed,src_pos,tgt_pos,projection_layer)
     
-    #Initialize parameters with Glorot / fan_avg.
     for p in model.parameters():
         if p.dim() > 1:
             nn.init.xavier_uniform_(p)

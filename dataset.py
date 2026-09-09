@@ -2,7 +2,7 @@ import torch
 from torch.utils.data import Dataset
 
 def create_casual_mask(seq_len:int)->torch.Tensor:
-    mask = torch.tril(torch.ones((1, seq_len, seq_len), dtype=torch.bool),diagonal=1)
+    mask = torch.triu(torch.ones((1, seq_len, seq_len), dtype=torch.bool),diagonal=1)
     return ~mask
 
 class PoetryDataset(Dataset):
