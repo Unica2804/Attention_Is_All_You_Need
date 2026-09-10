@@ -1,6 +1,7 @@
 import modal
+import subprocess
 
-volume = modal.Volume("poetry-transformer-volume",create_if_missing=True)
+volume = modal.Volume.from_name("poetry-transformer-volume",create_if_missing=True)
 
 image = (
     modal.Image.debian_slim(python_version="3.12")
@@ -20,7 +21,7 @@ image = (
 app = modal.App("poetry-transformer",image=image)
 
 @app.function(
-    gpu="",
+    gpu="L4",
     volumes={"/root/weights": volume},
     timeout=60*60*3
 )
@@ -34,6 +35,7 @@ def run_training():
 
     config["model_folder"] = "/root/weights"
     config["tokenizer_filename"] = "/root/weights/tokenizer.json"
+    config["experiment_name"] = "/root/weights/runs"
     print("Training configuration:",config)
     print("Starting training...")
     train_model(config)
@@ -42,4 +44,4 @@ def run_training():
 
 @app.local_entrypoint()
 def main():
-    run_training().remote()
+    run_training.remote()
