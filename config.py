@@ -2,7 +2,7 @@ from pathlib import Path
 def get_config():
     config = {
         "batch_size":8,
-        "num_epochs": 200,
+        "num_epochs": 2,
         "lr":10**-4,
         "src_seq_len": 40,
         "tgt_seq_len": 512,
@@ -11,7 +11,9 @@ def get_config():
         "model_filename": "tmodel_",
         "preload": None,
         "tokenizer_filename": "tokenizer_{0}.json",
-        "experiment_name": "runs/tmodel_{0}",
+        "experiment_name": "runs/tmodel",
+        "validate_every": 1,
+        "num_validation_samples": 2,
     }
     return config
 

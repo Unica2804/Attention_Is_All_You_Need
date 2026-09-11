@@ -11,6 +11,7 @@ dependencies = [
     "tokenizers",
     "tqdm",
     "tensorboard",
+    "torchmetrics",
 ]
 [tool.uv]
 link-mode = "hardlink"

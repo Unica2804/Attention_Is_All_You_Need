@@ -10,7 +10,8 @@ image = (
         "datasets",
         "tokenizers",
         "tqdm",
-        "tensorboard"
+        "tensorboard",
+        "torchmetrics"
     )
     .add_local_file("config.py","/root/config.py")
     .add_local_file("dataset.py","/root/dataset.py")

@@ -1,3 +1,4 @@
+import os
 import torch
 import torch.nn as nn
 
@@ -11,8 +12,9 @@ from torch.utils.data import DataLoader
 from pathlib import Path
 from tqdm import tqdm
 import warnings
+import torchmetrics
 
-from dataset import PoetryDataset
+from dataset import PoetryDataset, create_casual_mask
 from model import make_model
 from config import get_config, get_weights_path
 
@@ -60,6 +62,84 @@ def get_datasets(config:dict):
     val_loader = DataLoader(val_ds, batch_size=1, shuffle=False)
 
     return train_loader, val_loader, tokenizer_src
+
+def greedy_decode(model, src:torch.Tensor, src_mask:torch.Tensor, tokenizer:Tokenizer,max_len:int, device:torch.device)->torch.Tensor:
+
+    sos_idx = tokenizer.token_to_id("[SOS]")
+    eos_idx = tokenizer.token_to_id("[EOS]")
+
+    encoder_output = model.encode(src, src_mask)
+    decoder_input = torch.empty(1,1).fill_(sos_idx).type_as(src).to(device)
+    while True:
+        if decoder_input.size(1) == max_len:
+            break
+        decoder_mask = create_casual_mask(decoder_input.size(1)).type_as(src_mask).to(device)
+
+        out = model.decode(decoder_input, encoder_output, src_mask, decoder_mask)
+        prob = model.project(out[:,-1])
+        _,next_word = torch.max(prob,dim=1)
+        decoder_input = torch.cat(
+            [decoder_input, torch.empty(1,1).type_as(src).fill_(next_word.item()).to(device)],dim =1
+        )
+        if next_word == eos_idx:
+            break
+    return decoder_input.squeeze(0)
+
+def validate_model(model, val_ds, tokenizer, max_len:int, device:torch.device,print_msg, global_step:int,writer,num_samples:int=2):
+    model.eval()
+    count=0
+
+    source_texts = []
+    expected = []
+    predicted = []
+    try:
+        with os.popen("stty size", "r") as console:
+            _, console_width = console.read().split()
+            console_width = int(console_width)
+    except:
+        console_width = 80
+
+    with torch.no_grad():
+        for batch in val_ds:
+            count+=1
+            encoder_input = batch["encoder_input"].to(device)
+            encoder_mask = batch["src_mask"].to(device)
+
+            assert encoder_input.shape[0] == 1, "Batch size should be 1 for validation"
+            model_out = greedy_decode(model, encoder_input, encoder_mask, tokenizer, max_len, device)
+            source_text = batch["src_text"][0]
+            target_text = batch["tgt_text"][0]
+            model_out_text = tokenizer.decode(model_out.detach().cpu().numpy().tolist())
+            source_texts.append(source_text)
+            expected.append(target_text)
+            predicted.append(model_out_text)
+
+            print_msg('-'*console_width)
+            print_msg(f"{f'SOURCE: ':>12}{source_text}")
+            print_msg(f"{f'TARGET: ':>12}{target_text}")
+            print_msg(f"{f'PREDICTED: ':>12}{model_out_text}")
+
+            if count == num_samples:
+                print_msg('-'*console_width)
+                break
+    if writer:
+        # Char error rate
+        metric = torchmetrics.CharErrorRate()
+        cer = metric(predicted, expected)
+        writer.add_scalar("validation/cer", cer, global_step)
+        writer.flush()
+
+        # Word error rate
+        metric = torchmetrics.WordErrorRate()
+        wer = metric(predicted, expected)
+        writer.add_scalar("validation/wer", wer, global_step)
+        writer.flush()
+
+        # BLEU score
+        metric = torchmetrics.BLEUScore()
+        bleu = metric(predicted,[[exp] for exp in expected])
+        writer.add_scalar("validation/bleu", bleu, global_step)
+        writer.flush()
 
 def train_model(config:dict):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -115,6 +195,19 @@ def train_model(config:dict):
             optim.step()
             
             global_step += 1
+            
+        if epoch % config["validate_every"] == 0:
+            validate_model(
+                model=model,
+                val_ds=val_loader,
+                tokenizer=tokenizer_src,
+                max_len=config["tgt_seq_len"],
+                device=device,
+                print_msg=lambda msg: batch_iterator.write(msg),
+                global_step=global_step,
+                writer=writer,
+                num_samples=config["num_validation_samples"]
+            )
         model_filename = get_weights_path(config, f"{epoch:02d}")
         torch.save(
             {
